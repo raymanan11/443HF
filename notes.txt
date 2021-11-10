@@ -1,0 +1,10 @@
+peer0: basic:1b82dc751e07c3cf4cd698128239372a9389820b147f1c5fe54d0373830bc41d
+peer1: basic:835233e545cc337929917cd0819fed89bcc900410c0fb13859f754705bd0aff4
+peer3: basic:22113c61ac4c4155bb0387ce835d43994987a1674de3b19711f514c6955788f0
+
+approve chaincode peer0-org2
+peer lifecycle chaincode approveformyorg --channelID mychannel --name basic --version 1.0 --init-required --package-id basic:835233e545cc337929917cd0819fed89bcc900410c0fb13859f754705bd0aff4 --sequence 1 -o orderer:7050 --tls --cafile $ORDERER_CA 
+
+peer lifecycle chaincode approveformyorg --channelID mychannel --name basic --version 1.0 --init-required --package-id basic:1b82dc751e07c3cf4cd698128239372a9389820b147f1c5fe54d0373830bc41d --sequence 1 -o orderer:7050 --tls --cafile $ORDERER_CA 
+
+peer chaincode invoke -o orderer:7050 --tls true --cafile $ORDERER_CA -C mychannel -n basic --peerAddresses peer0-org1:7051 --tlsRootCertFiles /organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt --peerAddresses peer0-org2:7051 --tlsRootCertFiles /organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt --peerAddresses peer0-org3:7051 --tlsRootCertFiles /organizations/peerOrganizations/org3.example.com/peers/peer0.org3.example.com/tls/ca.crt -c '{"Args":["CreateAsset","PART10","Pilot Seats","false","EAF83ER35SD","Bradley"]}' --waitForEvent
