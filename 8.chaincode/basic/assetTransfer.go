@@ -1,7 +1,3 @@
-/*
-SPDX-License-Identifier: Apache-2.0
-*/
-
 package main
 
 import (
@@ -11,10 +7,9 @@ import (
 	"os"
 	"time"
 	"strconv"
-
-	"github.com/golang/protobuf/ptypes"
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
+  	"github.com/streadway/amqp"
 )
 
 type serverConfig struct {
@@ -29,12 +24,10 @@ type SmartContract struct {
 
 // Asset describes basic details of what makes up a simple asset
 type Asset struct {
-	Name   string `json:"name"`
-	IsDefect  bool `json:"isDefect"`
-	SerialNumber string `json:"serialNumber"`
+	ProductID   string `json:"productID"`
+	Quantity  int `json:"quantity"`
 	Owner  string `json:"owner"`
 }
-
 
 // HistoryQueryResult structure used for returning result of history query
 type HistoryQueryResult struct {
@@ -53,16 +46,16 @@ type QueryResult struct {
 // InitLedger adds a base set of cars to the ledger
 func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
 	assets := []Asset{
-		{Name: "Flight Controls", IsDefect: false, SerialNumber: "E96GJE93D", Owner: "United Airlines"},
-		{Name: "Landing Gear", IsDefect: false, SerialNumber: "U46834HJ3", Owner: "American Airlines"},
-		{Name: "Fuselage", IsDefect: true, SerialNumber: "FOIE463U2", Owner: "Delta"},
-		{Name: "Rudder Pedals", IsDefect: false, SerialNumber: "DFU9436OB", Owner: "Spirit"},
-		{Name: "Instrument Panels", IsDefect: false, SerialNumber: "FJE582KFD3", Owner: "Frontier"},
-		{Name: "Engine", IsDefect: true, SerialNumber: "DFJRO895D", Owner: "Alaska Airlines"},
-		{Name: "Wings", IsDefect: false, SerialNumber: "RID5569D2", Owner: "Southwest Airlines"},
-		{Name: "Rudders", IsDefect: false, SerialNumber: "TOIE835D3", Owner: "JetBlue"},
-		{Name: "Vertical Stabalizer", IsDefect: false, SerialNumber: "TI45GMD32W", Owner: "Hawaiian Airlines"},
-		{Name: "Overhead Panel", IsDefect: true, SerialNumber: "EKLF8534H", Owner: "Allegiant Air"},
+		{ProductID: "0", Quantity: 10, Owner: "United Airlines"},
+		{ProductID: "1", Quantity: 5, Owner: "Delta"},
+		{ProductID: "2", Quantity: 3, Owner: "Spirit"},
+		{ProductID: "3", Quantity: 7, Owner: "Frontier"},
+		{ProductID: "4", Quantity: 9, Owner: "Alaska Airlines"},
+		{ProductID: "5", Quantity: 6, Owner: "Southwest Airlines"},
+		{ProductID: "6", Quantity: 12, Owner: "JetBlue"},
+		{ProductID: "7", Quantity: 3, Owner: "Hawaiian Airlines"},
+		{ProductID: "8", Quantity: 3, Owner: "Allegiant Air"},
+		{ProductID: "9", Quantity: 7, Owner: "Boeing"},
 	}
 
 	for i, asset := range assets {
@@ -81,7 +74,7 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) 
 }
 
 // CreateAsset issues a new asset to the world state with given details.
-func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, name string, isDefect bool, serialNumber string, owner string) error {
+func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, productID string, quantity int, owner string) error {
 	exists, err := s.AssetExists(ctx, airlinePartNumber)
 	if err != nil {
 		return err
@@ -90,9 +83,8 @@ func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface,
 		return fmt.Errorf("the asset %s already exists", airlinePartNumber)
 	}
 	asset := Asset{
-		Name:   name,
-		IsDefect:  isDefect,
-		SerialNumber: serialNumber,
+		ProductID:   productID,
+		Quantity: quantity,
 		Owner:  owner,
 	}
 
@@ -101,7 +93,33 @@ func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface,
 		return err
 	}
 
-	return ctx.GetStub().PutState(airlinePartNumber, assetJSON)
+	ctx.GetStub().PutState(airlinePartNumber, assetJSON)
+
+	assets, err := s.ReadAsset(ctx, airlinePartNumber)
+	if err != nil {
+		return err
+	}
+
+	conn, err := amqp.Dial("amqps://wfsdzxpt:UdYJ3pVxVAEEtnP6RYBzs1fnvbTaocKb@gull.rmq.cloudamqp.com/wfsdzxpt")
+	failOnError(err, "Failed to connect to RabbitMQ")
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	failOnError(err, "Failed to open a channel")
+	defer ch.Close()
+
+	err = ch.Publish(
+		"",     // exchange
+		"HF_ML", // routing key
+		false,  // mandatory
+		false,  // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte("{\"message\": \"ML\",\"body\": {\"" + asset.ProductID + "\":" + strconv.Itoa(asset.Quantity) + "}}\n"),
+		})
+	failOnError(err, "Failed to publish a message")
+
+	return nil
 }
 
 // ReadAsset returns the asset stored in the world state with given id.
@@ -123,55 +141,6 @@ func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, a
 	return &asset, nil
 }
 
-// UpdateAsset updates an existing asset in the world state with provided parameters.
-func (s *SmartContract) UpdateAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, name string, isDefect bool, serialNumber string, owner string) error {
-	exists, err := s.AssetExists(ctx, airlinePartNumber)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("the asset %s does not exist", airlinePartNumber)
-	}
-
-	// overwritting original asset with new asset
-	asset := Asset{
-		Name:   name,
-		IsDefect:  isDefect,
-		SerialNumber: serialNumber,
-		Owner:  owner,
-	}
-
-	assetJSON, err := json.Marshal(asset)
-	if err != nil {
-		return err
-	}
-
-	return ctx.GetStub().PutState(airlinePartNumber, assetJSON)
-}
-
-// DeleteAsset deletes an given asset from the world state.
-func (s *SmartContract) DeleteAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string) error {
-	exists, err := s.AssetExists(ctx, airlinePartNumber)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("the asset %s does not exist", airlinePartNumber)
-	}
-
-	return ctx.GetStub().DelState(airlinePartNumber)
-}
-
-// AssetExists returns true when asset with given ID exists in world state
-func (s *SmartContract) AssetExists(ctx contractapi.TransactionContextInterface, airlinePartNumber string) (bool, error) {
-	assetJSON, err := ctx.GetStub().GetState(airlinePartNumber)
-	if err != nil {
-		return false, fmt.Errorf("failed to read from world state. %s", err.Error())
-	}
-
-	return assetJSON != nil, nil
-}
-
 // TransferAsset updates the owner field of asset with given id in world state.
 func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, newOwner string) error {
 	asset, err := s.ReadAsset(ctx, airlinePartNumber)
@@ -188,84 +157,38 @@ func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterfac
 	return ctx.GetStub().PutState(airlinePartNumber, assetJSON)
 }
 
-// GetAllAssets returns all assets found in world state
-func (s *SmartContract) GetAllAssets(ctx contractapi.TransactionContextInterface) ([]QueryResult, error) {
-	// range query with empty string for startKey and endKey does an open-ended query of all assets in the chaincode namespace.
-	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, id string) (*Asset, error) {
+	assetJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from world state. %s", err.Error())
+	}
+	if assetJSON == nil {
+		return nil, fmt.Errorf("the asset %s does not exist", id)
+	}
 
+	var asset Asset
+	err = json.Unmarshal(assetJSON, &asset)
 	if err != nil {
 		return nil, err
 	}
-	defer resultsIterator.Close()
 
-	var results []QueryResult
-
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-
-		if err != nil {
-			return nil, err
-		}
-
-		var asset Asset
-		err = json.Unmarshal(queryResponse.Value, &asset)
-		if err != nil {
-			return nil, err
-		}
-
-		queryResult := QueryResult{Key: queryResponse.Key, Record: &asset}
-		results = append(results, queryResult)
-	}
-
-	return results, nil
+	return &asset, nil
 }
 
-// GetAssetHistory returns the chain of custody for an asset since issuance.
-func (t *SmartContract) GetAssetHistory(ctx contractapi.TransactionContextInterface, airlinePartNumber string) ([]HistoryQueryResult, error) {
-	log.Printf("GetAssetHistory: PartNumber %v", airlinePartNumber)
-
-	resultsIterator, err := ctx.GetStub().GetHistoryForKey(airlinePartNumber)
+func (s *SmartContract) AssetExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	assetJSON, err := ctx.GetStub().GetState(id)
 	if err != nil {
-		return nil, err
-	}
-	defer resultsIterator.Close()
-
-	var records []HistoryQueryResult
-	for resultsIterator.HasNext() {
-		response, err := resultsIterator.Next()
-		if err != nil {
-			return nil, err
-		}
-
-		var asset Asset
-		if len(response.Value) > 0 {
-			err = json.Unmarshal(response.Value, &asset)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			asset = Asset{
-				
-			}
-		}
-
-		timestamp, err := ptypes.Timestamp(response.Timestamp)
-		if err != nil {
-			return nil, err
-		}
-
-		record := HistoryQueryResult{
-			TxId:      response.TxId,
-			Timestamp: timestamp,
-			Record:    &asset,
-			IsDelete:  response.IsDelete,
-		}
-		records = append(records, record)
+		return false, fmt.Errorf("failed to read from world state. %s", err.Error())
 	}
 
-	return records, nil
+	return assetJSON != nil, nil
 }
 
+func failOnError(err error, msg string) {
+	if err != nil {
+		log.Panicf("%s: %s", msg, err)
+	}
+}
 
 func main() {
 	// See chaincode.env.example
