@@ -24,7 +24,7 @@ type SmartContract struct {
 
 // Asset describes basic details of what makes up a simple asset
 type Asset struct {
-	ProductID   string `json:"productID"`
+	ProductID   int `json:"productID"`
 	Quantity  int `json:"quantity"`
 	Owner  string `json:"owner"`
 }
@@ -46,16 +46,16 @@ type QueryResult struct {
 // InitLedger adds a base set of cars to the ledger
 func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
 	assets := []Asset{
-		{ProductID: "0", Quantity: 10, Owner: "United Airlines"},
-		{ProductID: "1", Quantity: 5, Owner: "Delta"},
-		{ProductID: "2", Quantity: 3, Owner: "Spirit"},
-		{ProductID: "3", Quantity: 7, Owner: "Frontier"},
-		{ProductID: "4", Quantity: 9, Owner: "Alaska Airlines"},
-		{ProductID: "5", Quantity: 6, Owner: "Southwest Airlines"},
-		{ProductID: "6", Quantity: 12, Owner: "JetBlue"},
-		{ProductID: "7", Quantity: 3, Owner: "Hawaiian Airlines"},
-		{ProductID: "8", Quantity: 3, Owner: "Allegiant Air"},
-		{ProductID: "9", Quantity: 7, Owner: "Boeing"},
+		{ProductID: 0, Quantity: 10, Owner: "United Airlines"},
+		{ProductID: 1, Quantity: 5, Owner: "Delta"},
+		{ProductID: 2, Quantity: 3, Owner: "Spirit"},
+		{ProductID: 3, Quantity: 7, Owner: "Frontier"},
+		{ProductID: 4, Quantity: 9, Owner: "Alaska Airlines"},
+		{ProductID: 5, Quantity: 6, Owner: "Southwest Airlines"},
+		{ProductID: 6, Quantity: 12, Owner: "JetBlue"},
+		{ProductID: 7, Quantity: 3, Owner: "Hawaiian Airlines"},
+		{ProductID: 8, Quantity: 3, Owner: "Allegiant Air"},
+		{ProductID: 9, Quantity: 7, Owner: "Boeing"},
 	}
 
 	for i, asset := range assets {
@@ -73,31 +73,17 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) 
 	return nil
 }
 
-// CreateAsset issues a new asset to the world state with given details.
-func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, productID string, quantity int, owner string) error {
-	exists, err := s.AssetExists(ctx, airlinePartNumber)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return fmt.Errorf("the asset %s already exists", airlinePartNumber)
-	}
+func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, productID int, quantity int, owner string) error {
 	asset := Asset{
 		ProductID:   productID,
 		Quantity: quantity,
 		Owner:  owner,
 	}
 
-	assetJSON, err := json.Marshal(asset)
-	if err != nil {
-		return err
-	}
+	airlinePartAsBytes, err := json.Marshal(asset)
 
-	ctx.GetStub().PutState(airlinePartNumber, assetJSON)
-
-	assets, err := s.ReadAsset(ctx, airlinePartNumber)
 	if err != nil {
-		return err
+    	return err
 	}
 
 	conn, err := amqp.Dial("amqps://wfsdzxpt:UdYJ3pVxVAEEtnP6RYBzs1fnvbTaocKb@gull.rmq.cloudamqp.com/wfsdzxpt")
@@ -115,11 +101,11 @@ func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface,
 		false,  // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
-			Body:        []byte("{\"message\": \"ML\",\"body\": {\"" + asset.ProductID + "\":" + strconv.Itoa(asset.Quantity) + "}}\n"),
+			Body:        []byte("{\"message\": \"addProduct\", \"productID\": " + strconv.Itoa(asset.ProductID) + ", \"quantity\": " + strconv.Itoa(asset.Quantity) + "}\n"),
 		})
 	failOnError(err, "Failed to publish a message")
 
-	return nil
+	return ctx.GetStub().PutState(airlinePartNumber, airlinePartAsBytes)
 }
 
 // ReadAsset returns the asset stored in the world state with given id.
@@ -155,6 +141,39 @@ func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterfac
 	}
 
 	return ctx.GetStub().PutState(airlinePartNumber, assetJSON)
+}
+
+func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterface, airlinePartNumber string, newOwner string) error {
+	asset, err := s.ReadAsset(ctx, airlinePartNumber)
+
+	if err != nil {
+		return err
+	}
+
+	asset.Owner = newOwner
+
+	airlinePartAsBytes, _ := json.Marshal(asset)
+
+	conn, err := amqp.Dial("amqps://wfsdzxpt:UdYJ3pVxVAEEtnP6RYBzs1fnvbTaocKb@gull.rmq.cloudamqp.com/wfsdzxpt")
+	failOnError(err, "Failed to connect to RabbitMQ")
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	failOnError(err, "Failed to open a channel")
+	defer ch.Close()
+
+	err = ch.Publish(
+		"",     // exchange
+		"HF_ML", // routing key
+		false,  // mandatory
+		false,  // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        []byte("{\"message\": \"sellProduct\", \"productID\": " + strconv.Itoa(asset.ProductID) + ", \"quantity\": " + strconv.Itoa(asset.Quantity) + ", \"buyer\": " + asset.Owner + "}\n"),
+		})
+	failOnError(err, "Failed to publish a message")
+
+	return ctx.GetStub().PutState(airlinePartNumber, airlinePartAsBytes)
 }
 
 func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, id string) (*Asset, error) {

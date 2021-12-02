@@ -12,11 +12,9 @@ const {buildWallet} =require('./AppUtils')
     chaincodeName:"basic",
     userId:"aditya"
     data:{
-        id:"asset1",
-        color:"red",
-        size:5,
-        appraisedValue:200,
-        owner:"TOM"
+        productiId:"0",
+        quantity:"5",
+        owner:"Raymond"
     }
 }
 
@@ -42,7 +40,7 @@ exports.createAsset = async (request) => {
     // Get the contract from the network.
     const contract = network.getContract(request.chaincodeName);
     let data=request.data;
-    let result = await contract.submitTransaction('CreateAsset',data.airlinePartNumber,data.name,data.isDefect,data.serialNumber,data.owner);
+    let result = await contract.submitTransaction('CreateAsset',data.airlinePartNumber,data.productID,data.quantity,data.owner);
     
     return (result);
 }
@@ -54,8 +52,8 @@ exports.createAsset = async (request) => {
     chaincodeName:"basic",
     userId:"aditya"
     data:{
-        id:"asset1",
-        newOwner:"TOM"
+        id:"PART3",
+        newOwner:"Omar"
     }
 }
 */
